@@ -96,21 +96,22 @@ Quick Lang Switch убирает попап — Cursor-виджеты больш
 ~/.local/share/gnome-shell/extensions/quick-lang-switch@ankostis.gmail.com/extension.js
 ```
 
-Копии файлов в этом репозитории:
-- Оригинал: [quick-lang-switch-original.js](quick-lang-switch-original.js)
-- Патченый: [quick-lang-switch-patched.js](quick-lang-switch-patched.js)
+Копии файлов и план PR в upstream: [quick-lang-switch/](quick-lang-switch/)
+- Оригинал: [quick-lang-switch-original.js](quick-lang-switch/quick-lang-switch-original.js)
+- Патченый: [quick-lang-switch-patched.js](quick-lang-switch/quick-lang-switch-patched.js)
+- План PR: [PR-PLAN.md](quick-lang-switch/PR-PLAN.md)
 
 Применение патча (если нужно восстановить):
 
 ```bash
-cp quick-lang-switch-patched.js \
+cp quick-lang-switch/quick-lang-switch-patched.js \
   ~/.local/share/gnome-shell/extensions/quick-lang-switch@ankostis.gmail.com/extension.js
 ```
 
 Откат к оригиналу:
 
 ```bash
-cp quick-lang-switch-original.js \
+cp quick-lang-switch/quick-lang-switch-original.js \
   ~/.local/share/gnome-shell/extensions/quick-lang-switch@ankostis.gmail.com/extension.js
 ```
 
