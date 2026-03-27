@@ -158,9 +158,8 @@ Userspace-библиотеки NVIDIA (`libnvidia-*`) — **общие** для 
 
 ---
 
-## Следующий шаг: замена closed → open
+## Выполнено: замена closed → open (27.03.2026)
 
-### Что будет сделано
 ```bash
 sudo apt install nvidia-driver-580-open
 ```
@@ -224,7 +223,7 @@ sudo apt install nvidia-driver-580-open
 | Диск `/boot` | 1.7 GB свободно |
 | Диск `/` | 839 GB свободно |
 
-### Таблица рисков
+### Таблица рисков (предварительный анализ)
 
 | Сценарий | Экран (i915) | NVIDIA GPU | Как чинить |
 |----------|-------------|------------|------------|
@@ -235,6 +234,62 @@ sudo apt install nvidia-driver-580-open
 | apt прерван посреди операции | **Работает** | Pre-built fallback | `sudo dpkg --configure -a` |
 | Suspend/Resume глюк | Требует reboot | Неизвестно | Перезагрузка |
 
+### Результат после перезагрузки
+
+Замена прошла успешно. DKMS не положил модули в `/updates/dkms/` (pre-built open той же версии уже есть), `modprobe` загружает pre-built open-модуль из `/kernel/nvidia-580-open/nvidia.ko`.
+
+| Компонент | До (closed) | После (open) |
+|-----------|-------------|-------------|
+| nvidia.ko | 104 MB, `license: NVIDIA`, taint `POE` | 14 MB, `license: Dual MIT/GPL` |
+| GPU power state | `suspended` (мертва) | **`active`** |
+| nvidia-smi | "No devices were found" | **NVIDIA GeForce RTX 5050, 580.126.09, 8151 MiB** |
+| switcheroo-control | `HasDualGpu: false`, 1 GPU | **`HasDualGpu: true`, 2 GPU** |
+| /dev/dri/ | card1, renderD128 | **card1, card2, renderD128, renderD129** |
+| /dev/nvidia0 | I/O error | **доступен** |
+| i915 | загружен | **загружен** |
+| autoremove | 0 to remove | **0 to remove** |
+
+---
+
+## Очистка: purge rc-пакетов
+
+### Бэкап initramfs (создан перед purge)
+
+```bash
+sudo cp /boot/initrd.img-6.17.0-14-generic /boot/initrd.img-6.17.0-14-generic.backup
+cp /boot/initrd.img-6.17.0-14-generic ~/initrd-backup-6.17.0-14.img
+```
+
+Все три копии верифицированы (MD5: `93d10b51cac276a9db99edd6f61de3bd`):
+- `/boot/initrd.img-6.17.0-14-generic` — оригинал (81 MB)
+- `/boot/initrd.img-6.17.0-14-generic.backup` — бэкап в /boot (для GRUB recovery без LUKS)
+- `~/initrd-backup-6.17.0-14.img` — бэкап в home (долгосрочное хранение)
+
+### Что будет очищено
+
+6 rc-пакетов (статус `removed, configs remain` — только конфиги от давно удалённых пакетов):
+```
+linux-image-6.17.0-19-generic
+linux-modules-6.17.0-19-generic
+linux-modules-nvidia-580-6.17.0-19-generic
+linux-modules-nvidia-580-open-6.17.0-19-generic
+linux-objects-nvidia-580-6.17.0-19-generic
+nvidia-dkms-580
+```
+
+### Анализ рисков purge
+
+| # | Побочный эффект | Риск | Митигация |
+|---|----------------|------|-----------|
+| 1 | `linux-image-6.17.0-19` postrm вызовет `linux-update-symlinks` и `update-grub` | Очень низкий — файлов ядра 19 в /boot уже нет | GRUB перегенерируется с единственным ядром 14 |
+| 2 | `nvidia-dkms-580` postrm вызовет `update-initramfs -u` — пересоберёт initramfs | **Средний** — initramfs рабочего ядра будет пересобран | Бэкап создан; recovery через GRUB: `initrd /boot/initrd.img-6.17.0-14-generic.backup` |
+| 3 | `/lib/modules/6.17.0-19-generic/eset/` не удалится (rmdir на непустой dir) | Нулевой — 8 MB мусора | Удалить вручную позже |
+| 4 | autoremove каскад | **Отсутствует** — симуляция: 0 to remove | — |
+
+### autoremove после purge
+
+Симуляция: **0 to remove**. Цепочка зависимостей цела.
+
 ---
 
 ## Уроки
@@ -242,3 +297,4 @@ sudo apt install nvidia-driver-580-open
 1. После удаления ядра **всегда** проверяй `apt autoremove --simulate` перед реальным `autoremove` — удаление ядра может каскадно пометить как «сирот» пакеты, которые реально нужны.
 2. Для новых GPU (Blackwell / RTX 50xx) использовать **`nvidia-driver-580-open`**, а не `nvidia-driver-580` — closed-source модуль не поддерживает runtime PM.
 3. При замене мета-пакета NVIDIA возвращать **тот же тип** (open → open), а не менять на другой.
+4. Перед операциями, вызывающими `update-initramfs`, делать бэкап initramfs в `/boot/` (для GRUB recovery) и в home (долгосрочно).
