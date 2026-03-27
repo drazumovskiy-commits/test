@@ -1,0 +1,169 @@
+# Ubuntu GUI Recovery — Полный рекап диагностики и починки
+
+**Дата:** 26-27 марта 2026  
+**Машина:** Ноутбук Lenovo (рабочий), Ubuntu 24.04 LTS  
+**Железо:**
+- CPU: Intel Raptor Lake  
+- GPU 1 (встроенная): **Intel Raptor Lake-S UHD Graphics** (rev 04) — экран ноутбука подключён к ней  
+- GPU 2 (дискретная): **NVIDIA Device 28f8** (rev a1)  
+- Диски: зашифрованы (LUKS)  
+- SysRq: отключён на уровне ядра  
+
+---
+
+## Симптом
+
+После разблокировки зашифрованного диска — чёрный экран с маленьким белым мигающим курсором (подчёркивание) в левом верхнем углу. Никакие клавиши не работают, TTY (Ctrl+Alt+F1-F6) не переключаются.
+
+---
+
+## Что произошло (причина поломки)
+
+### Хронология событий (25-26 марта 2026):
+
+1. Пользователь пытался установить **Cursor IDE** (`cursor_2.6.21_amd64.deb`)
+2. apt не мог установить из-за конфликтов
+3. Были выполнены команды (из интернета/ChatGPT):
+   - `sudo chown -Rv _aptroot /var/cache/apt/archives/partial/` — сменил владельца кеша apt (безвредно для GUI, но ломает будущие apt install; правильный владелец `_apt`, а не `_aptroot`)
+   - `sudo chmod -Rv 700 /var/cache/apt/archives/partial/` — сменил права на кеш apt (относительно безвредно)
+   - `sudo killall apt-get` — **УБИЛ apt посреди установки пакетов** ← ОСНОВНАЯ ПРИЧИНА
+4. В момент kill apt устанавливал пакеты для нового ядра **6.17.0-19-generic**
+5. Пакет `linux-modules-extra-6.17.0-19-generic` **не доустановился** — в нём находится модуль **i915** (драйвер Intel-графики)
+6. Дополнительно пользователь устанавливал `linux-headers-6.17.0-19-generic`
+7. Пользователь выполнил `dpkg --configure -a` и `apt -f install`, потом **reboot**
+8. GRUB загрузил самое новое ядро (6.17.0-19) → **нет модуля i915** → экран не работает → чёрный экран
+
+### Корневая причина:
+**Модуль i915 (драйвер встроенной Intel-графики) отсутствует в ядре 6.17.0-19-generic.** На ноутбуках с гибридной графикой (Intel + NVIDIA) экран физически подключён к Intel GPU. Без i915 ни Xorg, ни Wayland не могут вывести картинку. NVIDIA тут ни при чём — к ней монитор не подключен, ошибка `Cannot find any crtc or sizes` для NVIDIA нормальна на ноутбуке.
+
+---
+
+## Установленные ядра
+
+| Ядро | Откуда | i915 | NVIDIA | Статус |
+|------|--------|------|--------|--------|
+| 6.8.0-101-generic | Оригинал Ubuntu 24.04 | ? (не проверяли) | есть .ko.sig | Старое (в `/lib/modules/`, но нет образа в `/boot/`) |
+| **6.17.0-14-generic** | HWE-обновление | **✓ ЕСТЬ** | есть .ko | **РАБОЧЕЕ, единственное активное ядро** |
+| ~~6.17.0-19-generic~~ | Установка 25-26 марта | ✗ НЕТ | — | **УДАЛЕНО 27.03.2026** |
+
+---
+
+## Как попадали в recovery
+
+1. GRUB меню не появлялось (таймаут 0 секунд)
+2. Решение: при появлении GRUB консоли (`grub>`) вводить:
+   ```
+   set timeout=30
+   insmod normal
+   normal
+   ```
+3. Появляется меню → Advanced options → Recovery mode → root shell
+4. `mount -o remount,rw /` для записи на диск
+
+---
+
+## Диагностика (что проверяли)
+
+### 1. Логи ошибок загрузки (`journalctl -b -1 -p err`)
+- "Failed to query NVIDIA devices"
+- "Failed to start nvidia-persistenced.service"
+- "GDM_IS_REMOTE_DISPLAY (display) failed" — многократно
+- Вывод: GDM падает в цикл
+
+### 2. NVIDIA-драйвер
+- `modprobe nvidia` — **работает без ошибок**
+- `/dev/nvidia*` устройства создаются
+- `nvidia-persistenced` — запускается и работает
+- Модули .ko есть в `/lib/modules/6.17.0-19-generic/kernel/nvidia-*/`
+- Зарегистрированы в `modules.dep`
+- **Вывод: NVIDIA драйвер полностью рабочий**
+
+### 3. Intel-драйвер (i915)
+- `lsmod` — **i915 НЕ загружен**
+- `find /lib/modules/6.17.0-19-generic/ -name "i915*"` — **файлов НЕТ**
+- `find /lib/modules/6.17.0-14-generic/ -name "i915*"` — **файлы ЕСТЬ** (kernel/drivers/gpu/drm/i915/)
+- **Вывод: i915 отсутствует в ядре 6.17.0-19, есть в 6.17.0-14**
+
+### 4. Xorg-лог
+- "Screen 0 deleted because of no matching config section"
+- "no devices detected"
+- "no screens found" → Fatal server error
+- **Вывод: Xorg не находит ни одного рабочего дисплея**
+
+### 5. GDM конфигурация (`/etc/gdm3/custom.conf`)
+- Полностью стандартная, всё закомментировано
+- WaylandEnable не задан (Wayland по умолчанию включён)
+
+### 6. Modprobe конфиги
+- `nvidia-graphics-drivers-kms.conf` — стандартный для nvidia-driver-500
+- `blacklist nvidiafb` — нормально (блокирует старый framebuffer, не основной драйвер)
+- i915 нигде не заблокирован
+
+### 7. dpkg/apt
+- `dpkg --configure -a` — ничего не вывел (нет полусконфигурированных пакетов)
+- `dpkg --audit` — чисто
+- apt history показывает ошибки `dpkg returned error code (1)` при установке nvidia-модулей и cursor 25 марта
+
+---
+
+## Решение
+
+### Этап 1: Временный (26 марта)
+Загрузка в ядро **6.17.0-14-generic** через GRUB → Advanced options → выбор ядра вручную.
+
+### Этап 2: Окончательный (27 марта)
+Сломанное ядро 6.17.0-19 **полностью удалено**. Выполнено:
+```bash
+sudo apt remove linux-image-6.17.0-19-generic linux-modules-6.17.0-19-generic \
+  linux-headers-6.17.0-19-generic linux-hwe-6.17-headers-6.17.0-19 \
+  linux-modules-nvidia-580-6.17.0-19-generic \
+  linux-modules-nvidia-580-open-6.17.0-19-generic \
+  linux-objects-nvidia-580-6.17.0-19-generic \
+  linux-signatures-nvidia-6.17.0-19-generic \
+  linux-modules-nvidia-580-generic-hwe-24.04 \
+  linux-modules-nvidia-580-open-generic-hwe-24.04
+sudo update-grub
+```
+
+Результат:
+- `/boot/` содержит только `vmlinuz-6.17.0-14-generic` и `initrd.img-6.17.0-14-generic`
+- GRUB перегенерирован, единственный пункт — 6.17.0-14
+- `/boot/vmlinuz` → симлинк на `vmlinuz-6.17.0-14-generic`
+- `i915` загружен и работает (`lsmod | grep i915` — ОК)
+
+**Статус: проблема с чёрным экраном РЕШЕНА. Перезагрузка безопасна.**
+
+---
+
+## Что ещё нужно сделать (TODO)
+
+### Выполнено:
+- [x] ~~Удалить сломанное ядро 6.17.0-19~~ (27.03.2026)
+- [x] ~~Починить права apt-кеша~~ (владелец уже `_apt:root`, права `0700` — корректно)
+- [x] ~~Установить Cursor IDE~~ (`.deb` установлен 26.03, работает из `/usr/share/cursor/`)
+
+### Желательно:
+- [ ] Почистить остатки удалённых пакетов: `sudo apt purge ~c` или `sudo apt autoremove --purge`
+- [ ] Разобраться с осиротевшими пакетами NVIDIA (`sudo apt autoremove`)
+- [ ] Настроить GRUB timeout (сейчас 0 — неудобно при проблемах)
+
+---
+
+## Важные уроки
+
+1. **Никогда не делать `killall apt-get`** во время установки — это может оставить систему в неконсистентном состоянии
+2. **Не запускать `Xorg :N` вручную из recovery** — он захватывает экран и клавиатуру без возможности вернуться (SysRq отключён, VT-переключение не работает)
+3. Ubuntu держит старые ядра именно для таких случаев — всегда можно откатиться через GRUB
+4. На ноутбуках с гибридной графикой (Intel + NVIDIA) экран подключён к Intel, а не к NVIDIA
+
+---
+
+## Системная информация
+
+- **OS:** Ubuntu 24.04 LTS
+- **Текущее рабочее ядро:** 6.17.0-14-generic
+- **Display Manager:** GDM3 (GNOME Display Manager)
+- **NVIDIA driver:** nvidia-driver-580-open (удалён вместе с ядром 6.17.0-19, нужно переустановить если нужна NVIDIA)
+- **Шифрование:** LUKS (полнодисковое)
+- **GRUB timeout:** 0 (нужно зажимать Shift/Esc или вручную вызывать меню)
+- **Cursor IDE:** установлен из `.deb` (`/usr/share/cursor/`, версия 2.6.21)
