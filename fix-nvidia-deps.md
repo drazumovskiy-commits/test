@@ -288,7 +288,39 @@ nvidia-dkms-580
 
 ### autoremove после purge
 
-Симуляция: **0 to remove**. Цепочка зависимостей цела.
+Симуляция и реальный запуск: **0 to remove**. Цепочка зависимостей цела.
+
+---
+
+## Выполнено: purge + autoremove (27.03.2026)
+
+Purge прошёл штатно. initramfs пересобран (как предсказано в риске #2). Перезагрузка успешна.
+
+### Финальное состояние системы
+
+| Компонент | Статус |
+|-----------|--------|
+| Ядро | `6.17.0-14-generic` (единственное в `/boot/`) |
+| i915 (экран) | Загружен, `Kernel driver in use: i915` |
+| Intel DRI | `card2` + `renderD129` |
+| NVIDIA модуль | Open (`Dual MIT/GPL`), из `/kernel/nvidia-580-open/nvidia.ko` |
+| NVIDIA GPU | RTX 5050, 580.126.09, 8151 MiB VRAM |
+| GPU runtime PM | Работает: спит (`suspended`) → просыпается по запросу → отвечает → засыпает |
+| nvidia-smi | Работает |
+| switcheroo | `HasDualGpu: true`, 2 GPU |
+| DRI | `card1`, `card2`, `renderD128`, `renderD129` |
+| GDM | active, enabled |
+| PRIME | `on-demand` |
+| NVIDIA пакетов | 24 (`ii`) |
+| rc-пакетов | 0 |
+| Сломанных пакетов | 0 |
+| autoremove | 0 to remove |
+| dpkg audit | Чисто |
+
+### Остаточный мусор (безвредный)
+- `/lib/modules/6.17.0-19-generic/eset/` — 8 MB (модули ESET антивируса для удалённого ядра)
+- `/lib/modules/6.8.0-101-generic/` — 4 KB (пустая директория старого ядра)
+- `/boot/initrd.img-6.17.0-14-generic.backup` — 81 MB (бэкап initramfs, можно удалить)
 
 ---
 
